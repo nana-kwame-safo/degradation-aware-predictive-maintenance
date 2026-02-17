@@ -19,7 +19,6 @@ Predictive maintenance is a reliability problem under uncertainty:
 This repository is designed as an industrial-style portfolio project, prioritising structured code, reproducible results, and engineering interpretation over purely algorithmic performance.
 
 
-
 ## Dataset
 Primary dataset: **NASA CMAPSS Turbofan Engine Degradation**
 - Multi-sensor time-series recorded across operating cycles
@@ -28,7 +27,6 @@ Primary dataset: **NASA CMAPSS Turbofan Engine Degradation**
 
 The dataset is not stored in the repository. See `data/README.md` for setup instructions.
 
----
 
 ## Setup
 
@@ -55,7 +53,7 @@ Download the CMAPSS dataset and place files under:
 
 See `data/README.md` for details.
 
----
+
 
 ## Project outputs
 
