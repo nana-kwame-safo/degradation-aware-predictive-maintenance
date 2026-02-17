@@ -1,0 +1,23 @@
+name: degradation-maintenance
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - seaborn
+  - scipy
+  - scikit-learn
+  - jupyterlab
+  - ipykernel
+  - tqdm
+  - xgboost
+  - lightgbm
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pip:
+      - tensorflow==2.15.*
