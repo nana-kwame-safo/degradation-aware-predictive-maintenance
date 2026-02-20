@@ -1,123 +1,127 @@
-# Data Setup (NASA CMAPSS)
+# Data README
 
-This project uses the **NASA CMAPSS Turbofan Engine Degradation** dataset to model progressive degradation in multi-sensor time-series and to support reliability-focused predictive maintenance.
+This document defines dataset acquisition, validation, and leakage controls for CMAPSS usage in this repository.
 
-The dataset is **not stored in this repository**. This document defines the expected local layout, data dictionary, and reproducibility rules used throughout the project.
+## Purpose
 
+Data handling is designed for reproducible reliability analysis, not only benchmark scoring.
 
-## Local folder layout
+Core requirements:
+- auditable target construction
+- strict unit-based data partitioning
+- deterministic preprocessing behavior
 
-- `data/raw/` contains the original downloaded CMAPSS files (not committed)
-- `data/processed/` contains cleaned and transformed artifacts produced by the pipeline (not committed)
+## Official Source (NASA CMAPSS)
 
-Added `.gitignore` already excludes both directories.
+Use the official NASA Prognostics Center of Excellence (PCoE) CMAPSS dataset source.
 
+Download all files for the subset(s) you plan to run:
+- `train_FD00x.txt`
+- `test_FD00x.txt`
+- `RUL_FD00x.txt`
 
-## Expected files
+Store them under:
+- `data/raw/cmapss/`
 
-Place the downloaded CMAPSS files under `data/raw/`.
+Example FD001:
+- `data/raw/cmapss/train_FD001.txt`
+- `data/raw/cmapss/test_FD001.txt`
+- `data/raw/cmapss/RUL_FD001.txt`
 
-Example (FD001):
-- `data/raw/train_FD001.txt`
-- `data/raw/test_FD001.txt`
-- `data/raw/RUL_FD001.txt`
+## Missing `RUL_FD00x.txt`: Required Recovery Path
 
-FD002–FD004 follow the same naming pattern.
+If you have train/test files but no RUL file:
+1. Re-download the matching subset from the same NASA source.
+2. Verify file naming matches the subset exactly (`FD001`..`FD004`).
+3. Confirm the RUL file is present before running smoke/evaluation scripts.
 
+Without `RUL_FD00x.txt`, test RUL labels cannot be reconstructed and full end-to-end evaluation is expected to fail.
 
-## Data dictionary (standard CMAPSS format)
+## Local Layout
 
-CMAPSS text files are whitespace-delimited with no header. The conventional column meanings are:
+- `data/raw/cmapss/`: source CMAPSS text files (not committed)
+- `data/interim/`: optional intermediate outputs (not committed)
+- `data/processed/`: model-ready outputs (not committed)
 
-- `unit`: engine identifier (integer)
-- `cycle`: time index / flight cycle (integer)
-- `op_setting_1..3`: operating condition settings (continuous)
-- `sensor_1..21`: sensor measurements (continuous)
+## Data Schema
 
-A typical schema therefore has **26 columns**:
+CMAPSS raw files are whitespace-delimited with no header.
 
-1. `unit`, 2. `cycle`, 3–5. `op_setting_1..3`, 6–26. `sensor_1..21`
+Expected columns:
+- `unit_id`
+- `cycle`
+- `op_setting_1..3`
+- `sensor_1..21`
 
-Notes:
-- Some sensors can be constant or near-constant depending on the subset.
-- Operating conditions vary by subset and influence degradation trajectories.
+Total expected raw columns: 26.
 
+## Target Construction
 
-## Labels and targets
+RUL construction implemented in `src/data/data_loader.py`:
+- train rows: `max_cycle(unit_id) - cycle`
+- test rows: `(last_cycle(unit_id) - cycle) + RUL_end(unit_id)` from `RUL_FD00x.txt`
 
-### Remaining Useful Life (RUL)
+Optional clipping is applied via configuration and should be recorded in result metadata.
 
-For *training* trajectories (run-to-failure), the standard label is:
+## Leakage Controls
 
-- `RUL = max_cycle(unit) - cycle`
+Required controls:
+- split by `unit_id` only
+- fit scalers on training split only
+- apply same scaler to validation/test
+- construct windows within unit boundaries only
+- avoid future-looking features
 
-For *test* trajectories, the provided file `RUL_FD00x.txt` gives the **true remaining cycles at the final observed cycle** for each unit. The pipeline should reconstruct per-cycle RUL for test units consistently.
+Core implementation:
+- `src/data/preprocessing.py`
+- `src/data/validation.py`
 
-Common practice (optional, but must be documented):
-- **RUL clipping** to a maximum (e.g., 125) to reduce the impact of early-life noise.
+## How To Run
 
-If clipping is used, record:
-- clip value
-- justification
-- effect on evaluation
+### End-to-end data-path smoke validation
 
-### Health Index (HI)
+```bash
+python scripts/smoke_test.py
+```
 
-HI is treated as a **degradation state signal**, typically:
-- bounded (e.g., 0–1)
-- decreasing or increasing monotonically with degradation
-- smooth enough for threshold-based decisions
+Expected output:
+- `SMOKE_TEST=PASS`
+- schema and split path exercised
+- train/val/test dataframe shapes
+- window and tabular feature shapes
 
-HI ground truth is not directly provided; it is constructed and evaluated via quality metrics.
+Artifacts:
+- none written.
 
+### Full baseline data path with artifact generation
 
-## Dataset variants (FD001–FD004)
+```bash
+python scripts/train_baselines.py --subset FD001 --rul_cap 125 --window 30 --step 1 --val_fraction 0.2 --seed 42
+```
 
-CMAPSS includes multiple subsets with different operating regimes and fault modes.
+Expected output:
+- leakage-safe split/scaling/window pipeline executes
+- saved file paths printed
 
-Recommended modelling progression:
-1. **FD001** as the baseline subset (simpler operating regime).
-2. Extend to FD002–FD004 once baselines are stable.
+Artifacts written:
+- `results/metrics/baselines_FD001.json`
+- `results/tables/baseline_comparison_FD001.csv`
+- `results/figures/pred_vs_true_<model>_FD001.png`
+- `results/figures/error_vs_rul_<model>_FD001.png`
 
-When you switch subset, record:
-- which subset you used
-- why it was chosen
-- implications for generalisation and evaluation
+## Decision-Use Framing
 
+Data pipeline quality directly affects maintenance decisions:
+- split leakage inflates reported accuracy and can cause unsafe maintenance intervals.
+- incorrect RUL reconstruction biases test metrics and decision thresholds.
+- reproducible preprocessing ensures model drift investigations are diagnosable.
 
-## Reproducibility and leakage control
+## Commit Boundaries
 
-This project is assessed as a reliability problem. To preserve validity:
+Not committed:
+- `data/raw/`
+- `data/interim/`
+- `data/processed/`
 
-- Split train/validation/test by **unit**, not by row.
-- Compute scalers and feature normalisation on **train only**.
-- Ensure windowing does not mix units across splits.
-- Treat any look-ahead feature (e.g., future sensors) as leakage.
-
-
-## Processed artifacts (produced by the pipeline)
-
-The project will generate processed files under `data/processed/`, for example:
-- cleaned train/test tables (with column names)
-- feature tables for classical baselines
-- windowed tensors for sequence models
-
-Suggested naming:
-- include subset: `FD001`
-- include stage: `clean`, `features`, `windows`
-
-Example:
-- `data/processed/FD001_clean.parquet`
-- `data/processed/FD001_features_baseline.parquet`
-- `data/processed/FD001_windows_L50_S1.npz`
-
-
-## Validation checks (minimum)
-
-Before modelling, confirm:
-- each `unit` has strictly increasing `cycle`
-- sensor columns parse as numeric
-- no missing values introduced by parsing
-- basic sanity plots show plausible degradation trends
-
-These checks are implemented in `src/data/validation.py` and should be executed early.
+Committed:
+- documentation and source code defining data contracts and validation behavior.

@@ -1,45 +1,97 @@
-# Notebooks
+# Notebooks README
 
-Notebooks are used for exploratory analysis, engineering inspection of degradation behaviour, and controlled experimentation.
+Notebooks are used for staged analysis before logic is stabilized in `src/`.
 
-The goal is to keep notebooks readable and reproducible:
-- exploration stays in notebooks,
-- validated logic migrates into `src/`.
+## Notebook Scope and Expected Outputs
 
+1. `01_exploratory_data_analysis.ipynb`
+- Purpose: verify CMAPSS schema, operating-regime behavior, and sensor stability patterns.
+- Expected artifacts: exploratory plots in `results/figures/` and summary notes for feature assumptions.
 
-## Working rules
+2. `02_preprocessing_and_splits.ipynb`
+- Purpose: demonstrate leakage-safe unit splits, scaling policy, and target construction checks.
+- Expected artifacts: split diagnostics and preprocessing summary tables in `results/tables/`.
 
-- Notebooks should import from `src/` rather than duplicating pipeline code.
-- Any result shown in a notebook should be saved to `results/` (figure/table/metrics).
-- Assumptions and design decisions should be written up in `reports/`.
+3. `03_rul_baseline_models.ipynb`
+- Purpose: train/evaluate baseline RUL models on tabular window features.
+- Expected artifacts: baseline metric outputs in `results/metrics/` and comparison figures/tables.
 
+4. `04_health_index_construction.ipynb`
+- Purpose: derive and evaluate HI trajectories against degradation progression assumptions.
+- Expected artifacts: HI trend plots and HI summary metrics for report integration.
 
-## Notebook sequence (current files)
+5. `05_sequence_models.ipynb`
+- Purpose: evaluate sequence-model extensions after baseline validation.
+- Expected artifacts: sequence-model comparison metrics and figures in `results/`.
 
-### `01_exploratory_data_analysis.ipynb`
-- dataset parsing sanity checks
-- operating regime inspection and unit trajectory plots
-- sensor screening (low variance / redundant sensors)
+## Required Notebook Header
 
-### `02_preprocessing_and_splits.ipynb`
-- leakage-safe splitting by unit
-- scaling strategy (global vs regime-aware)
-- windowing strategy definition (lookback length, stride)
+Start every notebook with a markdown cell containing:
+- purpose
+- expected outputs
+- assumptions and constraints
 
+## How To Run
 
-### `03_rul_baseline_models.ipynb`
-- defines baseline target construction (RUL label, optional clipping)
-- establishes interpretable baselines (ridge, tree-based)
-- evaluates MAE/RMSE and reliability-aware error analysis
-- produces a baseline comparison table
+### Pre-run validation
 
-### `04_health_index_construction.ipynb`
-- builds HI baselines (engineered / unsupervised)
-- evaluates HI quality (monotonicity, smoothness, correlation)
-- tests threshold behaviour (early warning vs false alarms)
+```bash
+python src/utils/env_check.py
+python scripts/smoke_test.py
+```
 
-### `05_sequence_models.ipynb`
-- introduces sequence models (LSTM/TCN) as controlled extensions
-- compares against classical baselines under the same evaluation protocol
-- documents stability issues (overfitting, regime sensitivity) where relevant
+Expected terminal output:
+- environment checks pass
+- `SMOKE_TEST=PASS` with shape diagnostics
 
+Artifacts:
+- none written by these checks.
+
+### Launch notebook environment
+
+```bash
+jupyter lab
+```
+
+Expected output:
+- local Jupyter server URL in terminal.
+
+Artifacts:
+- notebook execution state in-memory
+- optional autosave updates to `.ipynb` files
+
+### Generate reproducible artifacts from notebook workflows
+
+Notebook cells should write any persistent outputs to:
+- `results/metrics/`
+- `results/tables/`
+- `results/figures/`
+
+Expected artifacts:
+- explicit files referenced in notebook markdown and report links.
+
+## Notebook Engineering Rules
+
+- import reusable logic from `src/`, do not duplicate pipeline code in cells
+- keep unit-based splitting invariant
+- fit transforms on train only
+- avoid hidden state dependence; rerun from top before committing
+- migrate stable notebook logic into `src/`
+
+## Decision-Use Framing
+
+Notebook analysis should answer maintenance-relevant questions:
+- RUL: what intervention lead time is achievable under current error bands?
+- HI: does the degradation trend provide early warning ahead of low-RUL regimes?
+- Combined: where do RUL and HI agree or disagree on intervention urgency?
+
+## Commit Boundaries
+
+Committed:
+- notebook files and documentation
+
+Not committed:
+- raw/interim/processed datasets
+- generated result artifacts not explicitly curated
+
+Clear oversized or non-essential cell outputs before commit.

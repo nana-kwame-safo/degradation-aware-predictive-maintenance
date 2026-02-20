@@ -1,72 +1,117 @@
 # Source Code (`src/`)
 
-This folder contains reusable modules supporting a reproducible, engineering-led modelling pipeline.
+`src/` contains reusable, testable pipeline code for CMAPSS reliability modeling.
 
-The intended flow is:
+## Engineering Intent
 
-Data → preprocessing → feature engineering → modelling → evaluation → saved artifacts
+Code in `src/` should remain:
+- reproducible
+- leakage-safe
+- explicit about decision-relevant trade-offs
 
-
-## Module map
+## Module Responsibilities
 
 ### `src/config.py`
-Central configuration for:
-- dataset paths
-- dataset subset selection (FD001–FD004)
-- window lengths / strides
-- optional RUL clipping
-- output locations (`results/`)
+
+Single source of truth for:
+- repository paths
+- default subset and preprocessing settings
+- window/step and clipping controls
+- output directories
 
 ### `src/data/`
-Responsibilities:
-- load CMAPSS text files
-- assign column names
-- perform schema and sanity checks
-- build labels (RUL) in a leakage-safe manner
 
-Typical functions:
-- `load_cmapss()`
-- `build_rul_labels()`
-- `validate_trajectories()`
+- CMAPSS load/parsing and integrity checks
+- train/test RUL construction
+- unit-based split, scaling, windowing, and tabular feature utilities
+
+Core APIs:
+- `load_cmapss_subset()`
+- `unit_train_val_split()`
+- `fit_scaler()` / `transform_scaler()`
+- `make_windows()` / `make_window_features()`
 
 ### `src/features/`
-Responsibilities:
-- classical baseline features (rolling stats, deltas, trend slopes)
-- operating regime handling (when needed)
-- HI utilities (normalisation, smoothing)
+
+Feature engineering utilities for classical models and HI workflows.
 
 ### `src/models/`
-Responsibilities:
-- interpretable RUL baselines (ridge, RF/XGB)
-- HI construction models
-- sequence models as controlled extensions (LSTM/TCN)
+
+Baseline and extension model training logic.
 
 ### `src/evaluation/`
-Responsibilities:
-- common metrics (MAE/RMSE)
-- unit-level error analysis
-- reliability-aware evaluation (end-of-life region, asymmetric cost framing)
+
+Metric computation, stratified error analysis, and plotting helpers.
 
 ### `src/utils/`
-Responsibilities:
-- environment checks
-- I/O helpers (save/load metrics, figures)
-- run id management
 
+Environment and general helper utilities.
 
-## Engineering conventions
+## How To Run
 
-- Avoid data leakage (split by unit; scale on train only).
-- Prefer interpretable baselines before deep models.
-- Save metrics/figures/tables consistently to `results/`.
-- Keep assumptions explicit and documented in `reports/`.
+### Import integrity
 
+```bash
+python scripts/check_imports.py
+```
 
-## Entry points (recommended)
+Expected output:
+- `[PASS]` lines for each required module import.
 
-As the project develops, add lightweight scripts (either under `src/` or a top-level `scripts/` folder) to make runs reproducible outside notebooks:
-- `preprocess.py`
-- `train_rul_baselines.py`
-- `train_hi_baselines.py`
-- `train_sequence_models.py`
-- `evaluate.py`
+Artifacts:
+- none written.
+
+### Pipeline smoke test
+
+```bash
+python scripts/smoke_test.py
+```
+
+Expected output:
+- `SMOKE_TEST=PASS` with train/val/test, window, and tabular shapes.
+
+Artifacts:
+- none written.
+
+### Minimal module baseline run
+
+```bash
+python -m src.run_baseline
+```
+
+Expected output:
+- baseline training summary printed in terminal.
+
+Artifacts written:
+- `results/metrics/baseline_train_metrics.json`
+- `results/tables/baseline_train_metrics.csv`
+
+### Full baseline experiment run
+
+```bash
+python scripts/train_baselines.py --subset FD001 --rul_cap 125 --window 30 --step 1 --val_fraction 0.2 --seed 42
+```
+
+Expected output:
+- saved artifact paths and model comparison table.
+
+Artifacts written:
+- `results/metrics/baselines_FD001.json`
+- `results/tables/baseline_comparison_FD001.csv`
+- `results/figures/pred_vs_true_<model>_FD001.png`
+- `results/figures/error_vs_rul_<model>_FD001.png`
+
+## Decision-Use Framing
+
+Implementation choices in `src/` should preserve decision validity:
+- RUL outputs must remain calibrated enough for lead-time policy decisions.
+- HI features should reflect monotonic degradation behavior for escalation logic.
+- evaluation should expose near-failure error behavior, not only global averages.
+
+## Commit Boundaries
+
+Committed:
+- all source code under `src/`
+
+Not committed:
+- generated datasets, run artifacts, and model checkpoints produced by execution

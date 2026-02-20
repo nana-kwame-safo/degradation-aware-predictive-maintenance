@@ -63,6 +63,24 @@ Write 3–6 bullet points that answer:
 - What failure modes appear (regime shift, unstable sensors, noise)?
 - Where does the model struggle (early life vs late life)?
 
+### 3.2.1 Placeholder interpretation template (RUL bands + EOL behaviour)
+Use this template once `scripts/train_baselines.py` artifacts are available:
+
+- **RUL band [0,30):**  
+  MAE/RMSE = ___ / ___; interpretation of near-failure behavior: ___
+
+- **RUL band [30,60):**  
+  MAE/RMSE = ___ / ___; interpretation of transition-to-failure behavior: ___
+
+- **RUL band [60,125]:**  
+  MAE/RMSE = ___ / ___; interpretation of early-to-mid life behavior: ___
+
+- **End-of-life (EOL) judgement:**  
+  Is model error acceptable for maintenance triggering near failure? Yes/No and why.
+
+- **Operational implication:**  
+  Does the model bias toward over-prediction (late risk) or under-prediction (early maintenance cost)?
+
 ---
 
 ## 3.3 Health Index (HI) estimation results

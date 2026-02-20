@@ -1,10 +1,4 @@
-# -------------------------------------------------------------------------------
-# Python / Data Science project .gitignore (with project-specific rules)
-# -------------------------------------------------------------------------------
-# ------------------------------------------------------------------------------
 # Degradation-Aware Predictive Maintenance — .gitignore
-# Python/ML + notebooks + conda workflows
-# ------------------------------------------------------------------------------
 
 # --- Python bytecode / caches ---
 __pycache__/
@@ -35,7 +29,6 @@ htmlcov/
 .pytype/
 .pyre/
 .ruff_cache/
-ruff_cache/
 
 # --- Jupyter ---
 .ipynb_checkpoints/
@@ -48,6 +41,7 @@ venv/
 env/
 ENV/
 conda-meta/
+.mplconfig/
 
 # --- OS junk ---
 .DS_Store
@@ -74,13 +68,14 @@ Thumbs.db
 
 # Data (do not commit datasets)
 data/raw/
+data/interim/
 data/processed/
 !data/README.md
 
 # Results (keep folder structure + README + placeholders; ignore generated outputs)
-results/figures/
-results/tables/
-results/metrics/
+results/figures/*
+results/tables/*
+results/metrics/*
 !results/README.md
 !results/figures/.gitkeep
 !results/tables/.gitkeep

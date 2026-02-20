@@ -1,107 +1,116 @@
 # Degradation-Aware Predictive Maintenance
 
-This project applies reliability-focused machine learning to predictive maintenance by modeling **progressive degradation** in mechanical systems. It delivers two complementary outputs:
+Reliability-focused predictive maintenance workflow using NASA CMAPSS turbofan degradation data.
 
-1) **Remaining Useful Life (RUL) estimation** (regression)  
-2) **Health Index (HI) estimation** (trend-based degradation state)
+Primary technical outputs:
+1. Remaining Useful Life (RUL) estimates.
+2. Health Index (HI) trajectories.
 
-The emphasis is on **interpretable baselines first**, followed by sequence models, with evaluation framed in engineering and maintenance decision terms.  
-The project is developed with an emphasis on **reliability engineering principles, practical maintenance decision-making, and model interpretability**.
+Engineering constraints:
+- unit-level leakage control
+- train-only fit for preprocessing transforms
+- reproducible artifact generation under `results/`
 
+## Quickstart
 
-## Why this project
-Predictive maintenance is a reliability problem under uncertainty:
-- Failures are rare and costly (risk + downtime)
-- False alarms create operational disruption
-- Predictions must be interpreted with engineering judgement
-- Models must generalise across operating regimes and units
-
-This repository is designed as an industrial-style portfolio project, prioritising structured code, reproducible results, and engineering interpretation over purely algorithmic performance.
-
-
-## Dataset
-Primary dataset: **NASA CMAPSS Turbofan Engine Degradation**
-- Multi-sensor time-series recorded across operating cycles
-- Run-to-failure trajectories for multiple units
-- Standard benchmark for RUL and degradation modelling
-
-The dataset is not stored in the repository. See `data/README.md` for setup instructions.
-
-
-## Setup
-
-### 1) Clone the repository
 ```bash
 git clone https://github.com/nana-kwame-safo/degradation-aware-predictive-maintenance.git
 cd degradation-aware-predictive-maintenance
-```
-
-### 2) Create the environment (Conda)
-```bash
 conda env create -f environment.yml
 conda activate degradation-maintenance
-```
-
-### 3) Verify the environment
-```bash
 python src/utils/env_check.py
 ```
 
-### 4) Data setup
-Download the CMAPSS dataset and place files under:
-- `data/raw/`
+Place CMAPSS files under `data/raw/cmapss/`:
+- `train_FD001.txt`, `test_FD001.txt`, `RUL_FD001.txt`
+- `train_FD002.txt`, `test_FD002.txt`, `RUL_FD002.txt`
+- `train_FD003.txt`, `test_FD003.txt`, `RUL_FD003.txt`
+- `train_FD004.txt`, `test_FD004.txt`, `RUL_FD004.txt`
 
-See `data/README.md` for details.
+```bash
+python scripts/smoke_test.py --subset FD001
+python -m src.run_baseline --subset FD001 --window 30 --val_fraction 0.2 --seed 42 --rul_cap 125
+```
 
+Expected Quickstart behavior:
+- environment check runs without exceptions
+- smoke test prints dataset/window/tabular shapes and exits `0`
+- baseline runner writes metrics/table/figures under `results/`
 
+If you already have `train_*.txt` and `test_*.txt` but are missing `RUL_*.txt`:
+1. Re-download the matching subset package from the official NASA CMAPSS source.
+2. Ensure subset names match exactly (`FD001`/`FD002`/`FD003`/`FD004`).
+3. Confirm `RUL_FD00x.txt` exists before running evaluation.
 
-## Project outputs
+Without `RUL_FD00x.txt`, labeled test RUL cannot be constructed and evaluation will fail.
 
-### A) Remaining Useful Life (RUL) regression
-- Predict remaining cycles to failure
-- Compare interpretable models (linear and tree-based) and later sequence models
-- Evaluate using MAE/RMSE and reliability-aware error analysis, with attention to behaviour near end-of-life
+See `data/README.md` for schema and validation details.
 
-### B) Health Index estimation
-- Construct a degradation state signal per unit
-- Evaluate HI quality using monotonicity, smoothness, and correlation with time-to-failure
-- Compare HI-driven decision thresholds against direct RUL predictions
+## How To Run
 
+### Import and environment sanity
 
-## Approach (engineering-led, high level)
-1. Data ingestion and validation (units, cycles, sensors, operating conditions)
-2. Preprocessing (scaling, regime handling, windowing)
-3. Feature engineering (rolling statistics, trend-sensitive features)
-4. Baseline modelling (interpretable RUL and HI approaches)
-5. Reliability-aware evaluation and interpretation
-6. Sequence models (LSTM/TCN) as an extension and performance comparison
+```bash
+python scripts/check_imports.py
+```
 
+Expected output:
+- `[PASS]` lines for core imports and a final success line.
 
+Artifacts:
+- none written.
 
-## Repository structure
-- `data/` dataset layout and setup instructions (raw/processed not committed)
-- `notebooks/` exploratory analysis and experiments
-- `src/` reusable pipeline code (data, features, models, evaluation)
-- `results/` run artifacts (figures, tables, metrics; not committed by default)
-- `reports/` technical reports, results interpretation, and deployment notes (portfolio-ready)
+### End-to-end smoke test (no heavy training)
 
-## Results
-Experiment outputs are written to:
-- `results/figures/`
-- `results/tables/`
-- `results/metrics/`
+```bash
+python scripts/smoke_test.py --subset FD001
+```
 
-Curated figures and final tables intended for review can be placed under `reports/` for version control.
+Expected output:
+- `SMOKE_TEST=PASS`
+- train/validation/test dataframe shapes
+- window tensor shapes for train/val/test
+- tabular feature shapes and `feature_count=126`
 
+Artifacts:
+- none written.
 
-## Practical deployment notes
-See `reports/04_deployment_note.md` for how HI and RUL outputs can be translated into maintenance planning workflows, including threshold policies, lead-time considerations, and operational trade-offs.
+### Baseline training run
 
+```bash
+python -m src.run_baseline --subset FD001 --window 30 --val_fraction 0.2 --seed 42 --rul_cap 125
+```
 
-## Roadmap
-- [ ] Data ingestion and preprocessing pipeline
-- [ ] Interpretable RUL baselines and evaluation
-- [ ] Health Index construction and quality metrics
-- [ ] RUL vs HI comparison (decision-focused)
-- [ ] Sequence models (LSTM/TCN) and comparison to baselines
-- [ ] Final technical report and deployment note
+Expected output:
+- saved metrics/table/figure paths printed in terminal
+- model comparison table printed to stdout
+
+Artifacts written:
+- `results/metrics/baselines_FD001.json`
+- `results/tables/baseline_comparison_FD001.csv`
+- `results/figures/pred_vs_true_<model>_FD001.png`
+- `results/figures/error_vs_rul_<model>_FD001.png`
+
+## Decision-Use Framing
+
+RUL output supports lead-time decisions:
+- map predicted RUL bands to inspection, defer, or planned replacement actions.
+- apply tighter review thresholds near end-of-life bands.
+
+HI output supports trend decisions:
+- detect monotonic degradation slope shifts.
+- trigger deeper diagnostics when HI decline accelerates despite acceptable short-term RUL.
+
+Combined use:
+- RUL prioritizes timing of intervention.
+- HI supports confidence in degradation direction and escalation urgency.
+
+## Commit Boundaries
+
+Committed:
+- source code, scripts, notebooks, and documentation.
+
+Not committed:
+- dataset files in `data/raw/`, `data/interim/`, and `data/processed/`.
+- generated experiment artifacts in `results/`.
+- model binaries/checkpoints and transient logs.
