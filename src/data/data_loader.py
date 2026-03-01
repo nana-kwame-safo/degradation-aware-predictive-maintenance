@@ -1,21 +1,38 @@
 """
-CMAPSS data loading and target construction utilities.
+CMAPSS ingestion and label-construction module for the baseline pipeline.
 
-Engineering assumptions:
-- Input files follow the standard NASA CMAPSS naming convention.
-- Parsing is fail-fast: malformed schema or subset mismatch raises immediately.
-- RUL construction is explicit for both train (run-to-failure) and test
-  (partial trajectories merged with RUL_FD00x end-of-sequence targets).
+Responsibilities:
+- Load raw CMAPSS train/test text files from the repository data layout.
+- Validate schema and trajectory integrity before downstream preprocessing.
+- Construct row-level RUL targets for both train and test splits.
+
+Pipeline fit:
+- Upstream: raw files in ``data/raw/cmapss``.
+- Downstream: validated, labeled ``pd.DataFrame`` objects consumed by
+  leakage-safe splitting/scaling/windowing in ``src.data.preprocessing``.
+
+Input/output contract:
+- Input files follow NASA CMAPSS naming:
+  ``train_FD00x.txt``, ``test_FD00x.txt``, ``RUL_FD00x.txt``.
+- Output frames include CMAPSS raw columns plus ``rul``.
+
+Assumptions & leakage boundaries:
+- Train trajectories are run-to-failure and are labeled by remaining cycles.
+- Test trajectories are truncated and require ``RUL_FD00x`` end targets.
+- This module does not split or scale; it only produces validated labeled data.
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from src.config import cmapss_columns
 
 VALID_SUBSETS = {"FD001", "FD002", "FD003", "FD004"}
 
@@ -35,15 +52,43 @@ def _normalize_subset(subset: str) -> str:
 
 
 def cmapss_feature_columns() -> Tuple[List[str], List[str], List[str]]:
-    """Return operating-setting columns, sensor columns, and their concatenation."""
-    settings = [f"op_setting_{i}" for i in range(1, 4)]
-    sensors = [f"sensor_{i}" for i in range(1, 22)]
-    return settings, sensors, settings + sensors
+    """
+    Deprecated alias for ``src.config.cmapss_columns``.
+
+    Args:
+        None.
+
+    Returns:
+        Tuple[List[str], List[str], List[str]]: Operating-setting columns,
+        sensor columns, and concatenated feature columns.
+
+    Raises:
+        None directly. Emits ``DeprecationWarning``.
+    """
+    warnings.warn(
+        "cmapss_feature_columns() is deprecated. "
+        "Use src.config.cmapss_columns() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return cmapss_columns()
 
 
 def cmapss_all_columns() -> List[str]:
-    """Return the full CMAPSS raw schema (26 columns)."""
-    settings, sensors, _ = cmapss_feature_columns()
+    """
+    Return the full CMAPSS raw schema.
+
+    Args:
+        None.
+
+    Returns:
+        List[str]: Ordered column list with shape-defining keys:
+        ``["unit_id", "cycle"] + op_settings(3) + sensors(21)``.
+
+    Raises:
+        None.
+    """
+    settings, sensors, _ = cmapss_columns()
     return ["unit_id", "cycle"] + settings + sensors
 
 
@@ -67,7 +112,20 @@ class CMAPSSPaths:
     root_dir: Path
 
     def validate_root_dir(self) -> None:
-        """Validate that the configured CMAPSS root directory exists and is usable."""
+        """
+        Validate that the configured CMAPSS root directory is usable.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            FileNotFoundError: If root directory does not exist.
+            NotADirectoryError: If root path is not a directory.
+            ValueError: If directory name is not ``cmapss``.
+        """
         if not self.root_dir.exists():
             raise FileNotFoundError(f"CMAPSS root directory not found: {self.root_dir}")
         if not self.root_dir.is_dir():
@@ -81,12 +139,48 @@ class CMAPSSPaths:
             )
 
     def train_file(self, subset: str) -> Path:
+        """
+        Resolve train file path for a CMAPSS subset.
+
+        Args:
+            subset: Subset identifier (``FD001``..``FD004``).
+
+        Returns:
+            Path: Expected train file path.
+
+        Raises:
+            ValueError: If subset is invalid.
+        """
         return self.root_dir / f"train_{_normalize_subset(subset)}.txt"
 
     def test_file(self, subset: str) -> Path:
+        """
+        Resolve test file path for a CMAPSS subset.
+
+        Args:
+            subset: Subset identifier (``FD001``..``FD004``).
+
+        Returns:
+            Path: Expected test file path.
+
+        Raises:
+            ValueError: If subset is invalid.
+        """
         return self.root_dir / f"test_{_normalize_subset(subset)}.txt"
 
     def rul_file(self, subset: str) -> Path:
+        """
+        Resolve test-end RUL file path for a CMAPSS subset.
+
+        Args:
+            subset: Subset identifier (``FD001``..``FD004``).
+
+        Returns:
+            Path: Expected RUL target file path.
+
+        Raises:
+            ValueError: If subset is invalid.
+        """
         return self.root_dir / f"RUL_{_normalize_subset(subset)}.txt"
 
 
@@ -171,11 +265,19 @@ def validate_cmapss_dataframe(df: pd.DataFrame, name: str = "cmapss") -> None:
     """
     Validate CMAPSS frame integrity.
 
-    Required invariants:
-    - full raw CMAPSS schema is present
-    - unit_id and cycle are positive
-    - (unit_id, cycle) keys are unique
-    - cycle order is strictly increasing within each unit
+    Args:
+        df: Candidate CMAPSS dataframe with raw columns.
+        name: Label used in error messages for provenance.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If schema, positivity, uniqueness, or cycle ordering checks fail.
+
+    Assumptions & leakage boundaries:
+        - Frame must contain full raw schema from :func:`cmapss_all_columns`.
+        - Validation enforces temporal ordering but does not split data.
     """
     if df.empty:
         raise ValueError(f"[{name}] dataframe is empty.")
@@ -219,13 +321,23 @@ def add_train_rul(
     df_train: pd.DataFrame, rul_cap: Optional[int] = None
 ) -> pd.DataFrame:
     """
-    Add per-row train RUL labels for run-to-failure trajectories.
+    Add per-row RUL labels for train trajectories.
 
-    Assumption:
-        Each training unit runs until failure.
+    Args:
+        df_train: Train dataframe with required columns ``unit_id`` and ``cycle``.
+        rul_cap: Optional positive cap for clipping the resulting ``rul``.
 
-    Formula:
-        RUL(t) = max_cycle(unit_id) - cycle(t)
+    Returns:
+        pd.DataFrame: Copy of ``df_train`` with integer ``rul`` column.
+
+    Raises:
+        ValueError: If required columns are missing, cap is invalid, or negative
+            RUL values are produced.
+
+    Assumptions & leakage boundaries:
+        - Each unit in training runs to failure.
+        - Formula: ``RUL(t) = max_cycle(unit) - cycle(t)``.
+        - No statistics from test data are used.
     """
     required = {"unit_id", "cycle"}
     missing = sorted(required.difference(df_train.columns))
@@ -253,16 +365,24 @@ def add_test_rul(
     df_test: pd.DataFrame, rul_end: pd.Series, rul_cap: Optional[int] = None
 ) -> pd.DataFrame:
     """
-    Add per-row test RUL labels using RUL_FD00x.txt values.
+    Add per-row RUL labels for test trajectories.
 
-    Assumptions:
-    - test trajectories are truncated before failure
-    - RUL_FD00x has one value per test unit in ascending unit_id order
+    Args:
+        df_test: Test dataframe with required columns ``unit_id`` and ``cycle``.
+        rul_end: Per-unit end-of-trajectory RUL values indexed by ``unit_id``.
+        rul_cap: Optional positive cap for clipping the resulting ``rul``.
 
-    For each unit:
-        last_cycle = max observed cycle in test file
-        rul_end = cycles remaining after last observed cycle (from RUL file)
-        RUL(cycle) = (last_cycle - cycle) + rul_end
+    Returns:
+        pd.DataFrame: Copy of ``df_test`` with integer ``rul`` column.
+
+    Raises:
+        ValueError: If required columns are missing, target alignment fails,
+            cap is invalid, or negative RUL values are produced.
+
+    Assumptions & leakage boundaries:
+        - Test trajectories are truncated before failure.
+        - ``rul_end`` provides one value per test unit.
+        - Formula: ``RUL(cycle) = (last_cycle - cycle) + rul_end(unit)``.
     """
     required = {"unit_id", "cycle"}
     missing = sorted(required.difference(df_test.columns))
@@ -316,11 +436,25 @@ def load_cmapss_subset(
     rul_cap: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Load one CMAPSS subset and return train/test dataframes with RUL labels.
+    Load one CMAPSS subset and return labeled train/test dataframes.
+
+    Args:
+        paths: Validated CMAPSS path container.
+        subset: Subset identifier in ``{"FD001","FD002","FD003","FD004"}``.
+        rul_cap: Optional positive cap for ``rul`` clipping.
 
     Returns:
-        train_df: CMAPSS train rows with added `rul`
-        test_df: CMAPSS test rows with added `rul` reconstructed via RUL_FD00x
+        Tuple[pd.DataFrame, pd.DataFrame]:
+        ``(train_df, test_df)`` with CMAPSS raw columns plus ``rul``.
+
+    Raises:
+        FileNotFoundError: If required files are missing.
+        ValueError: If subset is invalid, schema/ordering checks fail, RUL
+            targets are misaligned, or label construction produces invalid values.
+
+    Assumptions & leakage boundaries:
+        - This function only loads and labels; no split/scaling/windowing occurs.
+        - Test labels are reconstructed using official ``RUL_FD00x`` files.
     """
     subset_norm = _normalize_subset(subset)
     paths.validate_root_dir()
@@ -355,7 +489,20 @@ def load_cmapss_subset(
 
 
 def cmapss_summary(df: pd.DataFrame) -> Dict[str, Optional[int]]:
-    """Return a compact dataframe summary for logging and diagnostics."""
+    """
+    Produce a compact dataframe summary for logging/diagnostics.
+
+    Args:
+        df: CMAPSS dataframe, optionally including ``rul``.
+
+    Returns:
+        Dict[str, Optional[int]]: Summary fields
+        ``n_rows``, ``n_units``, ``cycle_min``, ``cycle_max``,
+        ``rul_min`` and ``rul_max`` (the last two may be ``None``).
+
+    Raises:
+        KeyError: If required structural columns are missing.
+    """
     return {
         "n_rows": int(len(df)),
         "n_units": int(df["unit_id"].nunique()),

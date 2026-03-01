@@ -64,7 +64,7 @@ Write 3–6 bullet points that answer:
 - Where does the model struggle (early life vs late life)?
 
 ### 3.2.1 Placeholder interpretation template (RUL bands + EOL behaviour)
-Use this template once `scripts/train_baselines.py` artifacts are available:
+Use this template once `python -m src.run_baseline` artifacts are available:
 
 - **RUL band [0,30):**  
   MAE/RMSE = ___ / ___; interpretation of near-failure behavior: ___
@@ -80,6 +80,33 @@ Use this template once `scripts/train_baselines.py` artifacts are available:
 
 - **Operational implication:**  
   Does the model bias toward over-prediction (late risk) or under-prediction (early maintenance cost)?
+
+### 3.2.2 Decision-focused evaluation: trigger policies
+Trigger-policy evaluation converts continuous RUL predictions into unit-level maintenance decisions.
+
+Policy definition (default):
+- Trigger when predicted RUL `<= 20`.
+- Mark late trigger when true RUL at trigger `<= 5`.
+- Mark false alarm when true RUL at trigger `> 20 + 10`.
+- Mark missed trigger when no trigger occurs in the observed unit trajectory.
+
+Decision metrics to report from `policy_summary_<subset>_<model>.csv`:
+- `trigger_rate`: fraction of units that received a trigger.
+- `false_alarm_rate`: among triggered units, share triggered too early for current threshold policy.
+- `late_trigger_rate`: among triggered units, share triggered at/inside critical EOL zone.
+- `missed_trigger_rate`: fraction of units with no trigger.
+- `lead_time_mean/median/p10/p90`: true cycles remaining at trigger, summarizing planning margin.
+
+Maintenance interpretation:
+- Higher lead time improves planning flexibility, but excessive lead time can increase unnecessary maintenance.
+- High false alarm rate increases avoidable intervention cost and downtime.
+- High late trigger rate increases risk of unsafe or unplanned failure.
+- High missed trigger rate indicates the model/policy combination is not reliable for automated triggering.
+
+Recommended analysis sequence:
+1. Compare `missed_trigger_rate` and `late_trigger_rate` first (risk control).
+2. Then inspect `false_alarm_rate` (cost control).
+3. Use lead-time distribution (median + p10) to calibrate threshold and inspection cadence.
 
 ---
 

@@ -1,14 +1,12 @@
 """
-Feature engineering for degradation modelling.
+Feature engineering helpers for rolling, dataframe-level features.
 
-Baseline-first approach:
-- Convert time-series sensor streams into fixed-length window features.
-- Use simple rolling mean/std as interpretable engineered features.
+Use this module when you start from per-cycle dataframe rows and want a simple
+rolling representation (mean/std) aligned to window ends.
 
-Later extensions (not in this baseline file):
-- trend/derivative features
-- operating regime normalization
-- learned embeddings
+Use `src.data.preprocessing.make_window_features` when you already have 3D
+window tensors (`X.shape == (N, W, D)`) and need canonical tabular stats
+features (`mean/std/min/max/last/slope`) for baseline model pipelines.
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 
-def make_window_features(
+def make_rolling_window_features(
     df: pd.DataFrame,
     unit_col: str,
     time_col: str,
@@ -29,7 +27,7 @@ def make_window_features(
     clip_rul: int | None = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Convert per-cycle sensor readings into fixed-length window features per unit:
+    Convert per-cycle sensor readings into rolling window features per unit:
     - rolling mean (window)
     - rolling std (window)
 

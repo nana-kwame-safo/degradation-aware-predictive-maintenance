@@ -82,9 +82,9 @@ results/metrics/*
 !results/metrics/.gitkeep
 
 # Model artifacts / checkpoints (do not commit)
-models/
-checkpoints/
-lightning_logs/
+/models/
+/checkpoints/
+/lightning_logs/
 *.pt
 *.pth
 *.ckpt
@@ -96,10 +96,10 @@ lightning_logs/
 *.tflite
 
 # Experiment tracking / logs
-runs/
-mlruns/
-wandb/
-tensorboard/
-logs/
-log/
+/runs/
+/mlruns/
+/wandb/
+/tensorboard/
+/logs/
+/log/
 *.log

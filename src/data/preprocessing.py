@@ -1,14 +1,25 @@
 """
-Leakage-safe preprocessing utilities for CMAPSS baseline modelling.
+Leakage-safe preprocessing utilities for baseline-ready CMAPSS features.
 
-Design assumptions:
-- Splits are unit-based (never row-based).
-- Scalers are fit on training data only.
-- Window extraction never crosses unit boundaries.
+Responsibilities:
+- Partition trajectories by unit to prevent temporal leakage.
+- Fit/apply feature scaling with explicit train-only boundaries.
+- Convert per-cycle sensor frames into window tensors and tabular statistics.
+
+Pipeline fit:
+- Input: labeled CMAPSS frames with required columns (``unit_id``, ``cycle``, ``rul``).
+- Output: split/scaled dataframes, window tensors ``(N, W, d)``, metadata frames,
+  and tabular feature matrices for classical regressors.
+
+Assumptions & leakage boundaries:
+- Splits are by unit identity, never by row.
+- Scaler parameters are learned from training rows only.
+- Each window is contained within a single unit trajectory.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -91,11 +102,23 @@ def unit_train_val_split(
     seed: int,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split by unit_id only.
+    Split a dataframe into train/validation partitions by ``unit_id`` only.
 
-    Rationale:
-    row-level splitting leaks temporal information from the same unit into both
-    train and validation partitions, which inflates reported performance.
+    Args:
+        df: Input dataframe containing ``unit_id``.
+        val_fraction: Fraction of units assigned to validation in ``(0, 1)``.
+        seed: Random seed for deterministic unit shuffling.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: ``(train_df, val_df)``.
+
+    Raises:
+        ValueError: If schema is invalid, fraction is out of bounds, there are too
+            few units, or either partition becomes empty.
+
+    Assumptions & leakage boundaries:
+        - Unit-level split avoids train/validation leakage from shared trajectories.
+        - No row-level random split is performed.
     """
     _validate_unit_integrity(df, context="unit_train_val_split", require_cycle=False)
 
@@ -129,10 +152,22 @@ def unit_train_val_split(
 
 def fit_scaler(train_df: pd.DataFrame, feature_cols: Sequence[str]) -> StandardScaler:
     """
-    Fit a StandardScaler on training rows only.
+    Fit ``StandardScaler`` on training rows for selected feature columns.
 
-    This is the leakage boundary: validation/test statistics must not influence
-    transform parameters used during model fitting.
+    Args:
+        train_df: Training dataframe containing the requested feature columns.
+        feature_cols: Ordered feature column names to scale.
+
+    Returns:
+        StandardScaler: Fitted scaler with train-only statistics.
+
+    Raises:
+        ValueError: If dataframe integrity, feature existence, or finite-value
+            checks fail.
+
+    Assumptions & leakage boundaries:
+        - This function must be called on training data only.
+        - Validation/test rows must be transformed via :func:`transform_scaler`.
     """
     _validate_unit_integrity(train_df, context="fit_scaler", require_cycle=False)
     cols = _validate_feature_columns(train_df, feature_cols, context="fit_scaler")
@@ -146,7 +181,25 @@ def fit_scaler(train_df: pd.DataFrame, feature_cols: Sequence[str]) -> StandardS
 def transform_scaler(
     df: pd.DataFrame, scaler: StandardScaler, feature_cols: Sequence[str]
 ) -> pd.DataFrame:
-    """Apply a pre-fitted scaler to a dataframe copy."""
+    """
+    Apply a pre-fitted scaler to a dataframe copy.
+
+    Args:
+        df: Input dataframe to transform.
+        scaler: Previously fitted ``StandardScaler`` instance.
+        feature_cols: Ordered feature columns to transform.
+
+    Returns:
+        pd.DataFrame: Copy of ``df`` with transformed ``feature_cols``.
+
+    Raises:
+        ValueError: If dataframe integrity, feature existence, or finite-value
+            checks fail.
+
+    Assumptions & leakage boundaries:
+        - ``scaler`` is expected to come from train-only fitting.
+        - Non-feature columns are preserved unchanged.
+    """
     _validate_unit_integrity(df, context="transform_scaler", require_cycle=False)
     cols = _validate_feature_columns(df, feature_cols, context="transform_scaler")
     _validate_finite_values(df, cols, context="transform_scaler")
@@ -161,12 +214,34 @@ def make_windows(
     feature_cols: Sequence[str],
     window: int,
     step: int,
-) -> Tuple[np.ndarray, np.ndarray]:
+    return_meta: bool = False,
+) -> Tuple[np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """
-    Build fixed-length sensor windows and aligned RUL targets.
+    Build fixed-length per-unit windows and aligned RUL targets.
 
-    Target assignment:
-    - Each window target is the RUL at the window end index.
+    Args:
+        df: Input dataframe with required columns ``unit_id``, ``cycle``, ``rul``
+            and all ``feature_cols``.
+        feature_cols: Ordered feature columns used as channels.
+        window: Window length ``W`` (must be ``> 0``).
+        step: Stride between window end indices (must be ``> 0``).
+        return_meta: If ``True``, return aligned metadata frame.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray] or
+        Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+        - ``X`` with shape ``(N, W, d)``
+        - ``y`` with shape ``(N,)`` (RUL at window end)
+        - optional ``meta_df`` with columns ``unit_id``, ``cycle_end``, ``true_rul``
+
+    Raises:
+        ValueError: If schema checks fail, values are invalid, or no windows are
+            produced for the requested parameters.
+
+    Assumptions & leakage boundaries:
+        - Windows never cross unit boundaries.
+        - ``cycle`` must be strictly increasing per unit.
+        - Targets are end-aligned: ``y[i] = rul`` at each window end index.
     """
     if window <= 0:
         raise ValueError(f"window must be > 0. Received: {window}")
@@ -190,20 +265,31 @@ def make_windows(
 
     x_list: List[np.ndarray] = []
     y_list: List[float] = []
+    meta_rows: List[dict[str, float | int]] = []
 
     ordered = df.sort_values(["unit_id", "cycle"]).copy()
-    for _, g in ordered.groupby("unit_id", sort=True):
+    for uid, g in ordered.groupby("unit_id", sort=True):
         g = g.reset_index(drop=True)
         if len(g) < window:
             continue
 
         x_values = g[cols].to_numpy(dtype=float)
         y_values = g["rul"].to_numpy(dtype=float)
+        cycle_values = g["cycle"].to_numpy(dtype=int)
 
         for end in range(window - 1, len(g), step):
             start = end - window + 1
+            target = float(y_values[end])
             x_list.append(x_values[start : end + 1])
-            y_list.append(float(y_values[end]))
+            y_list.append(target)
+            if return_meta:
+                meta_rows.append(
+                    {
+                        "unit_id": int(uid),
+                        "cycle_end": int(cycle_values[end]),
+                        "true_rul": target,
+                    }
+                )
 
     if not x_list:
         raise ValueError(
@@ -213,17 +299,38 @@ def make_windows(
 
     x_arr = np.stack(x_list, axis=0)
     y_arr = np.asarray(y_list, dtype=float)
-    return x_arr, y_arr
+    if not return_meta:
+        return x_arr, y_arr
+
+    meta_df = pd.DataFrame(meta_rows, columns=["unit_id", "cycle_end", "true_rul"])
+    if meta_df.shape[0] != y_arr.shape[0]:
+        raise ValueError("make_windows metadata rows are not aligned with targets.")
+    return x_arr, y_arr, meta_df
 
 
-def make_window_features(x: np.ndarray) -> Tuple[np.ndarray, List[str]]:
+def make_window_features(
+    x: np.ndarray, feature_cols: Sequence[str]
+) -> Tuple[np.ndarray, List[str]]:
     """
-    Aggregate each window into tabular features.
+    Aggregate each window tensor into tabular baseline features.
 
-    Per channel statistics:
-    - mean, std, min, max, last, slope
+    Args:
+        x: Window tensor with shape ``(N, W, d)``.
+        feature_cols: Ordered channel names of length ``d``.
 
-    For 21 channels this yields 126 features.
+    Returns:
+        Tuple[np.ndarray, List[str]]:
+        - ``features`` with shape ``(N, 6 * d)``
+        - ``feature_names`` in deterministic stat-major order:
+          ``{col}_{mean|std|min|max|last|slope}``
+
+    Raises:
+        ValueError: If input tensor dimensionality is invalid, samples are empty,
+            window length is too short, or ``feature_cols`` do not match ``d``.
+
+    Assumptions & leakage boundaries:
+        - This function is a deterministic transformation of existing windows.
+        - No fitting or data-dependent global state is introduced.
     """
     arr = np.asarray(x, dtype=float)
     if arr.ndim != 3:
@@ -234,6 +341,15 @@ def make_window_features(x: np.ndarray) -> Tuple[np.ndarray, List[str]]:
         raise ValueError("x has zero samples; cannot compute window features.")
     if window < 2:
         raise ValueError("window length must be >= 2 to compute slope features.")
+
+    cols = list(feature_cols)
+    if len(cols) != n_features:
+        raise ValueError(
+            "feature_cols length must match window channel count. "
+            f"len(feature_cols)={len(cols)} != n_features={n_features}."
+        )
+    if len(set(cols)) != len(cols):
+        raise ValueError("feature_cols must be unique.")
 
     t = np.arange(window, dtype=float)
     t_centered = t - t.mean()
@@ -253,8 +369,8 @@ def make_window_features(x: np.ndarray) -> Tuple[np.ndarray, List[str]]:
 
     names: List[str] = []
     for stat in ["mean", "std", "min", "max", "last", "slope"]:
-        for i in range(n_features):
-            names.append(f"sensor_{i + 1}_{stat}")
+        for col in cols:
+            names.append(f"{col}_{stat}")
 
     return features, names
 
@@ -264,13 +380,40 @@ def make_window_features(x: np.ndarray) -> Tuple[np.ndarray, List[str]]:
 # -----------------------------------------------------------------------------
 
 
+def _warn_deprecated(name: str, replacement: str) -> None:
+    warnings.warn(
+        f"{name} is deprecated and will be removed in a future release. "
+        f"Use {replacement} instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+
 def split_by_unit(
     df: pd.DataFrame,
     unit_col: str = "unit_id",
     val_fraction: float = 0.2,
     random_state: int = 42,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Backward-compatible wrapper around unit_train_val_split."""
+    """
+    Deprecated wrapper for :func:`unit_train_val_split`.
+
+    Args:
+        df: Input dataframe.
+        unit_col: Unit identifier column (must be ``"unit_id"``).
+        val_fraction: Validation fraction by unit.
+        random_state: Random seed.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: ``(train_df, val_df)``.
+
+    Raises:
+        ValueError: If unsupported ``unit_col`` is supplied or split validation fails.
+    """
+    _warn_deprecated(
+        "split_by_unit",
+        "unit_train_val_split(df, val_fraction, seed)",
+    )
     if unit_col != "unit_id":
         raise ValueError("split_by_unit currently supports unit_col='unit_id' only.")
     return unit_train_val_split(df=df, val_fraction=val_fraction, seed=random_state)
@@ -284,7 +427,30 @@ def scale_sensor_columns(
 ) -> Tuple[
     pd.DataFrame, Optional[pd.DataFrame], Optional[pd.DataFrame], StandardScaler
 ]:
-    """Fit on train, transform train/val/test with the same scaler."""
+    """
+    Deprecated wrapper combining scaler fit and transform steps.
+
+    Args:
+        train_df: Training dataframe used to fit scaler and transform train.
+        sensor_cols: Feature columns to scale.
+        val_df: Optional validation dataframe to transform.
+        test_df: Optional test dataframe to transform.
+
+    Returns:
+        Tuple[pd.DataFrame, Optional[pd.DataFrame], Optional[pd.DataFrame], StandardScaler]:
+        ``(scaled_train, scaled_val, scaled_test, scaler)``.
+
+    Raises:
+        ValueError: Propagated from canonical scaling functions.
+
+    Assumptions & leakage boundaries:
+        - Scaler is fit on ``train_df`` only.
+        - ``val_df`` and ``test_df`` are transformed with the same scaler.
+    """
+    _warn_deprecated(
+        "scale_sensor_columns",
+        "fit_scaler(...) and transform_scaler(...)",
+    )
     cols = list(sensor_cols)
     scaler = fit_scaler(train_df=train_df, feature_cols=cols)
     out_train = transform_scaler(train_df, scaler=scaler, feature_cols=cols)
@@ -301,23 +467,6 @@ def scale_sensor_columns(
     return out_train, out_val, out_test, scaler
 
 
-def assert_unit_disjoint(
-    train_df: pd.DataFrame, val_df: pd.DataFrame, unit_col: str = "unit_id"
-) -> None:
-    """Raise if train and validation partitions share any unit identifier."""
-    if unit_col not in train_df.columns or unit_col not in val_df.columns:
-        raise ValueError(
-            f"assert_unit_disjoint requires column '{unit_col}' in both dataframes."
-        )
-    overlap = set(train_df[unit_col].unique()).intersection(
-        set(val_df[unit_col].unique())
-    )
-    if overlap:
-        raise ValueError(
-            f"Train/validation unit leakage detected. Overlap: {sorted(overlap)}"
-        )
-
-
 def generate_unit_windows(
     df: pd.DataFrame,
     feature_cols: Sequence[str],
@@ -327,32 +476,47 @@ def generate_unit_windows(
     window_size: int = 30,
     stride: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Backward-compatible window generator returning metadata arrays."""
+    """
+    Deprecated metadata-array wrapper for :func:`make_windows`.
+
+    Args:
+        df: Input dataframe with required windowing columns.
+        feature_cols: Ordered feature columns used as channels.
+        target_col: Target column name (must be ``"rul"``).
+        unit_col: Unit identifier column (must be ``"unit_id"``).
+        time_col: Time column name (must be ``"cycle"``).
+        window_size: Window length ``W``.
+        stride: Window stride.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        ``(X, y, unit_ids, end_cycles)`` aligned by sample index.
+
+    Raises:
+        ValueError: If unsupported legacy column names are provided or canonical
+            window generation fails.
+    """
+    _warn_deprecated(
+        "generate_unit_windows",
+        "make_windows(df, feature_cols, window, step, return_meta=True)",
+    )
     if target_col != "rul" or unit_col != "unit_id" or time_col != "cycle":
         raise ValueError(
             "generate_unit_windows currently expects target_col='rul', unit_col='unit_id', time_col='cycle'."
         )
 
-    x_arr, y_arr = make_windows(
-        df=df, feature_cols=feature_cols, window=window_size, step=stride
+    x_arr, y_arr, meta_df = make_windows(
+        df=df,
+        feature_cols=feature_cols,
+        window=window_size,
+        step=stride,
+        return_meta=True,
     )
-
-    unit_ids: List[int] = []
-    end_cycles: List[int] = []
-    ordered = df.sort_values(["unit_id", "cycle"]).copy()
-    for uid, g in ordered.groupby("unit_id", sort=True):
-        g = g.reset_index(drop=True)
-        if len(g) < window_size:
-            continue
-        for end in range(window_size - 1, len(g), stride):
-            unit_ids.append(int(uid))
-            end_cycles.append(int(g.loc[end, "cycle"]))
-
     return (
         x_arr,
         y_arr,
-        np.asarray(unit_ids, dtype=int),
-        np.asarray(end_cycles, dtype=int),
+        meta_df["unit_id"].to_numpy(dtype=int),
+        meta_df["cycle_end"].to_numpy(dtype=int),
     )
 
 
@@ -364,34 +528,46 @@ def build_tabular_baseline_features(
     time_col: str = "cycle",
     window_size: int = 30,
 ) -> pd.DataFrame:
-    """Backward-compatible tabular baseline feature builder."""
+    """
+    Deprecated wrapper to build tabular baseline dataframe from raw trajectories.
+
+    Args:
+        df: Input dataframe with unit/cycle/rul and sensor columns.
+        sensor_cols: Ordered sensor columns used for window channels.
+        target_col: Target column name (must be ``"rul"``).
+        unit_col: Unit identifier column (must be ``"unit_id"``).
+        time_col: Time column name (must be ``"cycle"``).
+        window_size: Window length ``W``.
+
+    Returns:
+        pd.DataFrame: Table with metadata columns ``unit_id``, ``cycle``, ``rul``
+        followed by deterministic tabular window features.
+
+    Raises:
+        ValueError: If unsupported legacy column names are provided or canonical
+            window/feature generation fails.
+    """
+    _warn_deprecated(
+        "build_tabular_baseline_features",
+        "make_windows(...) and make_window_features(..., feature_cols)",
+    )
     if target_col != "rul" or unit_col != "unit_id" or time_col != "cycle":
         raise ValueError(
             "build_tabular_baseline_features currently expects target_col='rul', "
             "unit_col='unit_id', time_col='cycle'."
         )
 
-    x_arr, y_arr = make_windows(
-        df=df, feature_cols=sensor_cols, window=window_size, step=1
+    x_arr, _, meta_df = make_windows(
+        df=df,
+        feature_cols=sensor_cols,
+        window=window_size,
+        step=1,
+        return_meta=True,
     )
-    feats, names = make_window_features(x_arr)
-
-    rows: List[dict] = []
-    ordered = df.sort_values(["unit_id", "cycle"]).copy()
-    idx = 0
-    for uid, g in ordered.groupby("unit_id", sort=True):
-        g = g.reset_index(drop=True)
-        if len(g) < window_size:
-            continue
-        for end in range(window_size - 1, len(g), 1):
-            record = {
-                "unit_id": int(uid),
-                "cycle": int(g.loc[end, "cycle"]),
-                "rul": float(y_arr[idx]),
-            }
-            for j, name in enumerate(names):
-                record[name] = float(feats[idx, j])
-            rows.append(record)
-            idx += 1
-
-    return pd.DataFrame(rows)
+    feats, names = make_window_features(x_arr, feature_cols=sensor_cols)
+    meta_out = meta_df.rename(columns={"cycle_end": "cycle", "true_rul": "rul"})
+    feat_out = pd.DataFrame(feats, columns=names)
+    return pd.concat(
+        [meta_out[["unit_id", "cycle", "rul"]].reset_index(drop=True), feat_out],
+        axis=1,
+    )

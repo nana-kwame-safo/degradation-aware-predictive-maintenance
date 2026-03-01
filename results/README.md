@@ -20,7 +20,7 @@ This directory is the run-output layer for:
 ### Generate baseline artifacts
 
 ```bash
-python scripts/train_baselines.py --subset FD001 --rul_cap 125 --window 30 --step 1 --val_fraction 0.2 --seed 42
+python -m src.run_baseline --subset FD001 --rul_cap 125 --window 30 --step 1 --val_fraction 0.2 --seed 42 --alert_thresholds 10,20,30
 ```
 
 Expected terminal output:
@@ -31,6 +31,16 @@ Expected terminal output:
 Artifacts written:
 - `results/metrics/baselines_FD001.json`
 - `results/tables/baseline_comparison_FD001.csv`
+- `results/tables/baseline_stratified_metrics_FD001.csv`
+- `results/tables/baseline_error_asymmetry_FD001.csv`
+- `results/tables/baseline_unit_summary_FD001.csv`
+- `results/tables/baseline_alert_thresholds_FD001.csv`
+- `results/tables/baseline_weighted_cost_FD001.csv`
+- `results/tables/policy_eval_<subset>_<model>.csv`
+- `results/tables/policy_summary_<subset>_<model>.csv`
+- `results/metrics/policy_eval_<subset>_<model>.json`
+- `results/figures/unit_mae_hist_<model>_FD001.png`
+- `results/figures/policy_timeline_<model>_FD001.png`
 - `results/figures/pred_vs_true_<model>_FD001.png`
 - `results/figures/error_vs_rul_<model>_FD001.png`
 

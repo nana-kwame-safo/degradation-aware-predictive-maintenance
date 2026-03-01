@@ -96,7 +96,7 @@ Artifacts:
 ### Full baseline data path with artifact generation
 
 ```bash
-python scripts/train_baselines.py --subset FD001 --rul_cap 125 --window 30 --step 1 --val_fraction 0.2 --seed 42
+python -m src.run_baseline --subset FD001 --rul_cap 125 --window 30 --step 1 --val_fraction 0.2 --seed 42
 ```
 
 Expected output:

@@ -154,9 +154,15 @@ def main() -> int:
         test_scaled, feature_cols=sensor_cols, window=window, step=step
     )
 
-    x_train_tab, feature_names = make_window_features(x_train_w)
-    x_val_tab, val_feature_names = make_window_features(x_val_w)
-    x_test_tab, test_feature_names = make_window_features(x_test_w)
+    x_train_tab, feature_names = make_window_features(
+        x_train_w, feature_cols=sensor_cols
+    )
+    x_val_tab, val_feature_names = make_window_features(
+        x_val_w, feature_cols=sensor_cols
+    )
+    x_test_tab, test_feature_names = make_window_features(
+        x_test_w, feature_cols=sensor_cols
+    )
 
     expected_feature_count = 126
     if x_train_tab.shape[1] != expected_feature_count:

@@ -1,10 +1,13 @@
 """
-Basic dataset validation.
+Lightweight schema and trajectory validation utilities for CMAPSS-like frames.
 
-Validation is a professional standard:
-- catches schema issues early
-- prevents silent errors and data leakage
-- makes notebooks safer and more repeatable
+Responsibilities:
+- Validate minimum structural columns needed by the data pipeline.
+- Enforce monotonic cycle progression within each unit trajectory.
+
+Pipeline fit:
+- Called early after data loading and before split/scaling/windowing.
+- Provides fail-fast diagnostics for malformed data contracts.
 """
 
 from __future__ import annotations
@@ -26,21 +29,22 @@ def _resolve_unit_column(df: pd.DataFrame) -> str:
 
 def validate_basic_schema(df: pd.DataFrame) -> None:
     """
-    Validate the minimal expected schema for CMAPSS-like data.
+    Validate minimal required schema for CMAPSS-like dataframes.
 
-    Expected columns at minimum:
-    - unit (engine identifier)
-    - cycle (time step / cycle count)
+    Args:
+        df: Input dataframe expected to include one unit identifier column
+            (``unit`` or ``unit_id``) and ``cycle``.
 
-    Parameters
-    ----------
-    df:
-        Input dataset.
+    Returns:
+        None.
 
-    Raises
-    ------
-    ValueError:
-        If required columns are missing or invalid.
+    Raises:
+        ValueError: If required columns are missing, contain NaN values, or
+            if ``cycle`` contains non-positive values.
+
+    Assumptions & leakage boundaries:
+        - Validation is structural only; no train/validation/test partitioning.
+        - Supports legacy ``unit`` and canonical ``unit_id`` naming.
     """
     unit_col = _resolve_unit_column(df)
     required = {unit_col, "cycle"}
@@ -58,19 +62,21 @@ def validate_basic_schema(df: pd.DataFrame) -> None:
 
 def validate_unit_monotonic_cycles(df: pd.DataFrame) -> None:
     """
-    Check that cycles increase monotonically within each unit.
+    Validate monotonic cycle progression within each unit trajectory.
 
-    This is a strong sanity check for time series data.
+    Args:
+        df: Input dataframe containing unit and cycle columns.
 
-    Parameters
-    ----------
-    df:
-        Dataset containing unit and cycle columns.
+    Returns:
+        None.
 
-    Raises
-    ------
-    ValueError:
-        If cycles are not monotonic within a unit.
+    Raises:
+        ValueError: If any unit contains non-monotonic ``cycle`` ordering.
+
+    Assumptions & leakage boundaries:
+        - Sorting by ``(unit, cycle)`` is applied before monotonic checks.
+        - This check prevents invalid temporal sequences from entering
+          downstream window generation.
     """
     # Sort defensively to make check reliable.
     unit_col = _resolve_unit_column(df)

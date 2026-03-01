@@ -26,10 +26,10 @@ if str(REPO_ROOT) not in sys.path:
 from src.config import Config
 from src.data.data_loader import CMAPSSPaths, load_cmapss_subset
 from src.data.preprocessing import (
-    assert_unit_disjoint,
-    generate_unit_windows,
-    scale_sensor_columns,
-    split_by_unit,
+    fit_scaler,
+    make_windows,
+    transform_scaler,
+    unit_train_val_split,
 )
 from src.data.validation import validate_basic_schema, validate_unit_monotonic_cycles
 
@@ -70,23 +70,30 @@ def main() -> int:
             raise ValueError("Found NaNs in constructed RUL targets")
         _ok("Train/test RUL targets constructed successfully")
 
-        train_split, val_split = split_by_unit(
-            train_df,
-            unit_col="unit_id",
+        train_split, val_split = unit_train_val_split(
+            df=train_df,
             val_fraction=cfg.val_fraction,
-            random_state=cfg.random_state,
+            seed=cfg.random_state,
         )
-        assert_unit_disjoint(train_split, val_split, unit_col="unit_id")
+        overlap = set(train_split["unit_id"].unique()).intersection(
+            set(val_split["unit_id"].unique())
+        )
+        if overlap:
+            raise ValueError(
+                f"Train/validation unit leakage detected. Overlap: {sorted(overlap)}"
+            )
         _ok(f"Unit-based split passed | train_rows={len(train_split)}, val_rows={len(val_split)}")
 
-        scaled_train, scaled_val, scaled_test, scaler = scale_sensor_columns(
-            train_df=train_split,
-            val_df=val_split,
-            test_df=test_df,
-            sensor_cols=cfg.sensor_cols,
+        scaler = fit_scaler(train_df=train_split, feature_cols=cfg.sensor_cols)
+        scaled_train = transform_scaler(
+            train_split, scaler=scaler, feature_cols=cfg.sensor_cols
         )
-        if scaled_val is None or scaled_test is None:
-            raise ValueError("Scaled validation/test outputs are missing")
+        scaled_val = transform_scaler(
+            val_split, scaler=scaler, feature_cols=cfg.sensor_cols
+        )
+        scaled_test = transform_scaler(
+            test_df, scaler=scaler, feature_cols=cfg.sensor_cols
+        )
         if len(scaler.mean_) != len(cfg.sensor_cols):
             raise ValueError("Scaler was not fit on expected sensor columns")
 
@@ -100,18 +107,20 @@ def main() -> int:
             f"scaled_train={scaled_train.shape}, scaled_val={scaled_val.shape}, scaled_test={scaled_test.shape}"
         )
 
-        X, y, unit_ids, end_cycles = generate_unit_windows(
+        X, y, meta_df = make_windows(
             df=scaled_train,
             feature_cols=cfg.sensor_cols,
-            target_col="rul",
-            unit_col="unit_id",
-            time_col="cycle",
-            window_size=cfg.window,
-            stride=cfg.step,
+            window=cfg.window,
+            step=cfg.step,
+            return_meta=True,
         )
         if X.shape[0] == 0:
             raise ValueError("Window generation returned zero samples")
-        if y.shape[0] != X.shape[0] or unit_ids.shape[0] != X.shape[0] or end_cycles.shape[0] != X.shape[0]:
+        if (
+            y.shape[0] != X.shape[0]
+            or meta_df.shape[0] != X.shape[0]
+            or set(meta_df.columns) != {"unit_id", "cycle_end", "true_rul"}
+        ):
             raise ValueError("Window outputs have inconsistent sample counts")
         _ok(f"Window generation passed | X={X.shape}, y={y.shape}")
 

@@ -134,8 +134,12 @@ class Config:
     baseline_model: str = "ridge"  # ridge | rf | xgb (later)
 
     # Feature columns (refine later after EDA/feature selection)
-    op_setting_cols: List[str] = field(default_factory=lambda: [f"op_setting_{i}" for i in range(1, 4)])
-    sensor_cols: List[str] = field(default_factory=lambda: [f"sensor_{i}" for i in range(1, 22)])
+    op_setting_cols: List[str] = field(
+        default_factory=lambda: cmapss_columns()[0].copy()
+    )
+    sensor_cols: List[str] = field(
+        default_factory=lambda: cmapss_columns()[1].copy()
+    )
 
     @property
     def feature_cols(self) -> List[str]:

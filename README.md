@@ -88,6 +88,11 @@ Expected output:
 Artifacts written:
 - `results/metrics/baselines_FD001.json`
 - `results/tables/baseline_comparison_FD001.csv`
+- `results/tables/baseline_stratified_metrics_FD001.csv`
+- `results/tables/baseline_error_asymmetry_FD001.csv`
+- `results/tables/baseline_unit_summary_FD001.csv`
+- `results/tables/baseline_alert_thresholds_FD001.csv`
+- `results/tables/baseline_weighted_cost_FD001.csv`
 - `results/figures/pred_vs_true_<model>_FD001.png`
 - `results/figures/error_vs_rul_<model>_FD001.png`
 
@@ -105,12 +110,28 @@ Combined use:
 - RUL prioritizes timing of intervention.
 - HI supports confidence in degradation direction and escalation urgency.
 
-## Commit Boundaries
+## Data & Artifacts are not committed
 
-Committed:
-- source code, scripts, notebooks, and documentation.
+Repository history excludes local/raw inputs and generated outputs:
+- `data/raw/`, `data/interim/`, `data/processed/`
+- `results/figures/`, `results/tables/`, `results/metrics/`
+- caches such as `__pycache__/` and `.mplconfig/fontlist-*.json`
 
-Not committed:
-- dataset files in `data/raw/`, `data/interim/`, and `data/processed/`.
-- generated experiment artifacts in `results/`.
-- model binaries/checkpoints and transient logs.
+Committed placeholders:
+- `data/README.md`
+- `results/README.md`
+- `results/figures/.gitkeep`
+- `results/tables/.gitkeep`
+- `results/metrics/.gitkeep`
+
+Regenerate result artifacts:
+
+```bash
+python -m src.run_baseline --subset FD001 --window 30 --val_fraction 0.2 --seed 42 --rul_cap 125
+```
+
+Clean local caches/artifacts (without deleting `README.md` or `.gitkeep`):
+
+```bash
+python scripts/clean_repo.py
+```
