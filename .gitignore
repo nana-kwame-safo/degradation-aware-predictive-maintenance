@@ -36,6 +36,7 @@ htmlcov/
 # --- Environments / local config ---
 .env
 .env.*
+.codex
 .venv/
 venv/
 env/

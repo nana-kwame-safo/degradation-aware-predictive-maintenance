@@ -1,15 +1,21 @@
 # Degradation-Aware Predictive Maintenance
 
-Reliability-focused predictive maintenance workflow using NASA CMAPSS turbofan degradation data.
+Reliability-focused predictive maintenance workflow on NASA CMAPSS turbofan degradation data.
 
-Primary technical outputs:
-1. Remaining Useful Life (RUL) estimates.
-2. Health Index (HI) trajectories.
+## Current Implemented Scope
 
-Engineering constraints:
-- unit-level leakage control
-- train-only fit for preprocessing transforms
-- reproducible artifact generation under `results/`
+- Leakage-safe RUL baseline modelling (`FD001` validated locally).
+- Unit-level train/validation split to prevent unit leakage.
+- Baseline model comparison (ridge, elasticnet, random forest, xgboost/lightgbm fallback, persistence).
+- Decision-focused evaluation (stratified RUL bands, asymmetry diagnostics, weighted late/early cost).
+- Trigger/policy evaluation with unit-level first-trigger analysis.
+- Reproducible CLI pipeline and tests under `src/`, `scripts/`, and `tests/`.
+
+## Planned Extensions
+
+- Health Index (HI) construction and evaluation in production pipeline code.
+- Sequence models (e.g., LSTM/TCN/Transformer variants) with controlled baseline comparison.
+- Richer degradation trajectory modelling and policy calibration across FD002-FD004.
 
 ## Quickstart
 
@@ -27,111 +33,41 @@ Place CMAPSS files under `data/raw/cmapss/`:
 - `train_FD003.txt`, `test_FD003.txt`, `RUL_FD003.txt`
 - `train_FD004.txt`, `test_FD004.txt`, `RUL_FD004.txt`
 
-```bash
-python scripts/smoke_test.py --subset FD001
-python -m src.run_baseline --subset FD001 --window 30 --val_fraction 0.2 --seed 42 --rul_cap 125
-```
-
-Expected Quickstart behavior:
-- environment check runs without exceptions
-- smoke test prints dataset/window/tabular shapes and exits `0`
-- baseline runner writes metrics/table/figures under `results/`
-
-If you already have `train_*.txt` and `test_*.txt` but are missing `RUL_*.txt`:
-1. Re-download the matching subset package from the official NASA CMAPSS source.
-2. Ensure subset names match exactly (`FD001`/`FD002`/`FD003`/`FD004`).
-3. Confirm `RUL_FD00x.txt` exists before running evaluation.
-
-Without `RUL_FD00x.txt`, labeled test RUL cannot be constructed and evaluation will fail.
-
-See `data/README.md` for schema and validation details.
-
-## How To Run
-
-### Import and environment sanity
+## Reproduce Milestone 2 Outputs
 
 ```bash
 python scripts/check_imports.py
-```
-
-Expected output:
-- `[PASS]` lines for core imports and a final success line.
-
-Artifacts:
-- none written.
-
-### End-to-end smoke test (no heavy training)
-
-```bash
 python scripts/smoke_test.py --subset FD001
-```
-
-Expected output:
-- `SMOKE_TEST=PASS`
-- train/validation/test dataframe shapes
-- window tensor shapes for train/val/test
-- tabular feature shapes and `feature_count=126`
-
-Artifacts:
-- none written.
-
-### Baseline training run
-
-```bash
 python -m src.run_baseline --subset FD001 --window 30 --val_fraction 0.2 --seed 42 --rul_cap 125
 ```
 
-Expected output:
-- saved metrics/table/figure paths printed in terminal
-- model comparison table printed to stdout
-
-Artifacts written:
+Expected generated outputs (local, not committed):
 - `results/metrics/baselines_FD001.json`
 - `results/tables/baseline_comparison_FD001.csv`
 - `results/tables/baseline_stratified_metrics_FD001.csv`
 - `results/tables/baseline_error_asymmetry_FD001.csv`
-- `results/tables/baseline_unit_summary_FD001.csv`
 - `results/tables/baseline_alert_thresholds_FD001.csv`
 - `results/tables/baseline_weighted_cost_FD001.csv`
+- `results/tables/policy_eval_FD001_<model>.csv`
+- `results/tables/policy_summary_FD001_<model>.csv`
 - `results/figures/pred_vs_true_<model>_FD001.png`
 - `results/figures/error_vs_rul_<model>_FD001.png`
+- `results/figures/policy_timeline_<model>_FD001.png`
 
-## Decision-Use Framing
+## Notebook Status
 
-RUL output supports lead-time decisions:
-- map predicted RUL bands to inspection, defer, or planned replacement actions.
-- apply tighter review thresholds near end-of-life bands.
+Notebooks under `notebooks/` are optional exploratory workspaces. The canonical, reproducible pipeline for this milestone is the script/module path (`src/` + `scripts/`).
 
-HI output supports trend decisions:
-- detect monotonic degradation slope shifts.
-- trigger deeper diagnostics when HI decline accelerates despite acceptable short-term RUL.
+## Curated Diagnostics
 
-Combined use:
-- RUL prioritizes timing of intervention.
-- HI supports confidence in degradation direction and escalation urgency.
+![XGBoost Predicted vs True RUL](reports/figures/pred_vs_true_xgboost_FD001.png)
+![XGBoost Error vs True RUL](reports/figures/error_vs_rul_xgboost_FD001.png)
+![XGBoost Policy Timeline](reports/figures/policy_timeline_xgboost_FD001.png)
 
-## Data & Artifacts are not committed
+## Data And Artifact Commit Policy
 
-Repository history excludes local/raw inputs and generated outputs:
+Raw CMAPSS data and bulk generated run artifacts are intentionally excluded from git history:
 - `data/raw/`, `data/interim/`, `data/processed/`
-- `results/figures/`, `results/tables/`, `results/metrics/`
-- caches such as `__pycache__/` and `.mplconfig/fontlist-*.json`
+- `results/metrics/`, `results/tables/`, `results/figures/` (except `.gitkeep`)
 
-Committed placeholders:
-- `data/README.md`
-- `results/README.md`
-- `results/figures/.gitkeep`
-- `results/tables/.gitkeep`
-- `results/metrics/.gitkeep`
-
-Regenerate result artifacts:
-
-```bash
-python -m src.run_baseline --subset FD001 --window 30 --val_fraction 0.2 --seed 42 --rul_cap 125
-```
-
-Clean local caches/artifacts (without deleting `README.md` or `.gitkeep`):
-
-```bash
-python scripts/clean_repo.py
-```
+This keeps the repository reproducible and lightweight while preserving scripts and report-ready curated outputs.
